@@ -49,6 +49,8 @@ class S8Procedure(nupylab_procedure.NupylabProcedure):
     target_temperature: FloatParameter = FloatParameter("Target Temperature", units="C")
     ramp_rate: FloatParameter = FloatParameter("Ramp Rate", units="C/min")
     dwell_time: FloatParameter = FloatParameter("Dwell Time", units="min")
+
+
     potentiostat: ListParameter = ListParameter("Brand Potentiostat", default="Biologic", choices=Potentiostat_options)
     potentiostat_model = ListParameter("Model Potentiostat", choices=Biologic_models, default="SP200")
     potentiostat_port: Parameter = Parameter(
