@@ -1,0 +1,80 @@
+Index: nupylab/instruments/dc_potentiostat/biologic.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>\"\"\"Adapts Biologic driver to NUPylab instrument class for use with NUPyLab GUIs.\"\"\"\r\nfrom __future__ import annotations\r\nimport importlib\r\nfrom typing import Sequence, Union, TYPE_CHECKING, Optional, List, Type, Callable\r\n\r\nimport numpy as np\r\nfrom nupylab.drivers.biologic import BiologicPotentiostat, OCV\r\nfrom nupylab.utilities import DataTuple, NupylabError\r\nfrom nupylab.utilities.nupylab_instrument import NupylabInstrument\r\n\r\nif TYPE_CHECKING:\r\n    from nupylab.drivers.biologic import Technique\r\n\r\nclass Biologic(NupylabInstrument):\r\n    \"\"\"Biologic instrument class. Abstracts driver for NUPyLab procedures.\r\n\r\n    Attributes:\r\n        data_label: labels for DataTuples.\r\n        name: name of instrument.\r\n        lock: thread lock for preventing simultaneous calls to instrument.\r\n        biologic: Biologic driver class.\r\n        channels: active measurement channels.\r\n    \"\"\"\r\n\r\n    def __init__(\r\n        self,\r\n        port: str,\r\n        model: str,\r\n        channels: Union[int, Sequence[int]],\r\n        data_label: Sequence[str],\r\n        name: str = \"Biologic\",\r\n        eclib_path: Optional[str] = None,\r\n    ) -> None:\r\n        \"\"\"Initialize Biologic data labels, name, and connection parameters.\r\n\r\n        Args:\r\n            port: string name of port, e.g. `USB0` or IP address.\r\n            model: Biologic model, e.g. `SP200` or `SP300`.\r\n            channels: Biologic channels to measure, zero-based.\r\n            data_label: labels for DataTuples. :meth:`get_data` returns two results\r\n                for each channel (Ewe, I), and corresponding\r\n                labels should match entries in DATA_COLUMNS.\r\n            name: name of instrument.\r\n            eclib_path: path to the directory containing the EClib DLL. If None, default\r\n                is used.\r\n\r\n        Raises:\r\n            ValueError: if `data_label` does not contain 2 entries per channel.\r\n        \"\"\"\r\n        if not hasattr(channels, \"__len__\"):\r\n            channels = (channels,)\r\n        if len(channels) * 2 != len(data_label):\r\n            raise ValueError(\"data_label must contain 2 entries per channel.\")\r\n        model = model.replace(\"-\", \"\").replace(\" \", \"\").upper()\r\n        self.biologic: BiologicPotentiostat = BiologicPotentiostat(\r\n            model, port, eclib_path\r\n        )\r\n        self.ocv = None\r\n        self.channels = channels\r\n        self._chan_bool: List[int] = [\r\n            0,\r\n        ] * 16  # for multi-channel operations\r\n        for c in self.channels:\r\n            self._chan_bool[c] = 1\r\n        self._measuring_ocv: bool = False\r\n        self._finished: bool = False\r\n        self._dc_condition = None\r\n        super().__init__(data_label, name)\r\n\r\n    def connect(self) -> None:\r\n        \"\"\"Connect to Biologic.\"\"\"\r\n        with self.lock:\r\n            self.biologic.connect()\r\n            self.biologic.load_firmware(self._chan_bool)\r\n            self._connected = True\r\n\r\n    def _initialize_DC(\r\n        self,\r\n        app_step: list,\r\n        dur_step: list,\r\n        record_time: float,\r\n        technique: str,\r\n        dc: Type[Technique],\r\n        **kwargs,\r\n    )-> None:\r\n        technique_dict: dict = globals()[technique + \"_DICT\"].copy()\r\n        technique_dict.update(\r\n            {\r\n                \"duration_step\": dur_step,\r\n                \"record_every_dt\": record_time\r\n            }\r\n        )\r\n        if technique in \"CP\":\r\n            technique_dict.update({\"current_step\": app_step})\r\n        else:\r\n            technique_dict.update({\"voltage_step\": app_step})\r\n        for key in kwargs.keys():\r\n            if key not in technique_dict:\r\n                raise KeyError(\r\n                    f\"Biologic technique {technique} does not contain \"\r\n                    f\"keyword argument {key}\"\r\n                )\r\n        self._dc = dc(**technique_dict)\r\n\r\n    def set_parameters(\r\n        self,\r\n        record_time: float,\r\n        applied_step: list,\r\n        duration_step: list,\r\n        technique: str,\r\n        dc_condition: Callable[[], bool],\r\n        **kwargs,\r\n    ) -> None:\r\n        \"\"\"Set measurement parameters and prepare DC technique.\r\n\r\n        Args:\r\n            record_time: time between recording events.\r\n            applied_step: list of currents in Amps or voltages in Amps to apply\r\n            duration_step: list of durations in seconds.\r\n            technique: DC technique to run, must be `CP` or 'CA'. Defaults to 'CA'.\r\n            dc_condition: function indicating whether to begin dc measurement.\r\n            **kwargs: additional kwargs to pass to `technique`.\r\n\r\n        Raises:\r\n            KeyError: if `technique` is not supported.\r\n        \"\"\"\r\n        technique = technique.upper()\r\n        if technique not in (\"CA\", \"CP\"):\r\n            raise KeyError(\r\n                f\"Technique {technique} must be `CA` or `CP`.\"\r\n            )\r\n        dc: Type[Technique] = getattr(\r\n            importlib.import_module(\"nupylab.drivers.biologic\"), technique\r\n        )\r\n        self.ocv: OCV = OCV(\r\n            duration=24 * 60 * 60,\r\n            record_every_de=0.1,\r\n            record_every_dt=record_time,\r\n            e_range=\"KBIO_ERANGE_AUTO\",\r\n        )\r\n        self._dc_condition = dc_condition\r\n        self._initialize_DC(\r\n            applied_step,\r\n            duration_step,\r\n            record_time,\r\n            technique,\r\n            dc,\r\n            **kwargs,\r\n        )\r\n        self._finished = False\r\n        self._parameters = True  # Placeholder just to indicate parameters are set.\r\n\r\n    def start(self) -> None:\r\n        \"\"\"Start OCV measurement on Biologic channel(s).\r\n\r\n        Raises:\r\n            NupylabError: if `start` method is called before `set_parameters`.\r\n        \"\"\"\r\n        if self._parameters is None:\r\n            raise NupylabError(\r\n                f\"`{self.__class__.__name__}` method `set_parameters` \"\r\n                \"must be called before calling its `start` method.\"\r\n            )\r\n        with self.lock:\r\n            for c in self.channels:\r\n                self.biologic.load_technique(c, self.ocv, first=True, last=True)\r\n            if len(self.channels) == 1:\r\n                self.biologic.start_channel(self.channels[0])\r\n            else:\r\n                self.biologic.start_channels(self._chan_bool)\r\n        self._measuring_ocv = True\r\n        self._parameters = None\r\n\r\n    def get_data(self) -> List[DataTuple]:\r\n        \"\"\"Get OCV or DC data for each channel.\r\n\r\n        Returns:\r\n            DataTuples in the order E_we, I for each\r\n            channel if measuring eis, E_we only if measuring OCV.\r\n        \"\"\"\r\n        with self.lock:\r\n            all_data = [self.biologic.get_data(c) for c in self.channels]\r\n            if not self._measuring_ocv:\r\n                self._finished = all(\r\n                    self.biologic.get_channel_infos(c)[\"State\"] == 0 for c in self.channels\r\n                )\r\n            # Switch from OCV to DC upon external condition, like furnace program complete\r\n            if self.dc_condition:\r\n                if len(self.channels) == 1:\r\n                    channel = self.channels[0]\r\n                    self.biologic.stop_channel(channel)\r\n                    self.biologic.load_technique(channel, self._dc, first=True, last=True)\r\n                    self.biologic.start_channel(channel)\r\n                else:\r\n                    self.biologic.stop_channels(self._chan_bool)\r\n                    for c in self.channels:\r\n                        self.biologic.load_technique(c, self._dc, first=True, last=True)\r\n                    self.biologic.start_channels(self._chan_bool)\r\n                self._measuring_ocv = False\r\n\r\n        data = []\r\n        for kbio_data, c in zip(all_data, self.channels):\r\n            if kbio_data is None:\r\n                continue\r\n\r\n            if \"I\" in kbio_data.data_field_names:  # Measuring CP or CA\r\n                data.append((\r\n                    DataTuple(self.data_label[0], kbio_data.Ewe),\r\n                    DataTuple(self.data_label[1], kbio_data.I),)\r\n                )\r\n            else:\r\n                data.append(DataTuple(self.data_label[0], kbio_data.Ewe))\r\n        return data\r\n\r\n    @property\r\n    def dc_condition(self) -> bool:\r\n        \"\"\"Get whether to begin eis measurement.\"\"\"\r\n        if not self._measuring_ocv:  # Prevents unnecessary function calls\r\n            return False\r\n        return self._dc_condition()\r\n\r\n    @property\r\n    def finished(self) -> bool:\r\n        \"\"\"Get whether Biologic channels are finished.\"\"\"\r\n        if self._measuring_ocv:  # Never finished if measuring OCV\r\n            return False\r\n        return self._finished\r\n\r\n    def stop_measurement(self) -> None:\r\n        \"\"\"Stop measurement on all Biologic channels.\"\"\"\r\n        with self.lock:\r\n            if len(self.channels) == 1:\r\n                self.biologic.stop_channel(self.channels[0])\r\n            else:\r\n                self.biologic.stop_channels(self._chan_bool)\r\n\r\n    def shutdown(self) -> None:\r\n        \"\"\"Disconnect from Biologic.\"\"\"\r\n        with self.lock:\r\n            self.biologic.disconnect()\r\n\r\nCP_DICT = {\r\n    \"current_step\": [1e-6,],\r\n    \"duration_step\": [5.0,],\r\n    \"vs_initial\": False,\r\n    \"n_cycles\": 0,\r\n    \"record_every_dt\": 0.1,\r\n    \"record_every_de\": 0.1,\r\n    \"i_range\": \"KBIO_IRANGE_AUTO\",\r\n    \"e_range\": \"KBIO_ERANGE_2_5\",\r\n    \"bandwidth\": \"KBIO_BW_5\",\r\n}\r\n\r\nCA_DICT = {\r\n    \"voltage_step\": [1e-3,],\r\n    \"duration_step\": [5.0,],\r\n    \"vs_initial\": False,\r\n    \"n_cycles\": 0,\r\n    \"record_every_dt\": 0.1,\r\n    \"record_every_di\": 0.1,\r\n    \"i_range\": \"KBIO_IRANGE_AUTO\",\r\n    \"e_range\": \"KBIO_ERANGE_2_5\",\r\n    \"bandwidth\": \"KBIO_BW_5\",\r\n}
+===================================================================
+diff --git a/nupylab/instruments/dc_potentiostat/biologic.py b/nupylab/instruments/dc_potentiostat/biologic.py
+--- a/nupylab/instruments/dc_potentiostat/biologic.py	(revision fd535493a60c110e94091b2d1d5fd22180efb27a)
++++ b/nupylab/instruments/dc_potentiostat/biologic.py	(date 1774546163233)
+@@ -76,13 +76,15 @@
+ 
+     def _initialize_DC(
+         self,
+-        app_step: list,
+-        dur_step: list,
++        app_step: float,
++        dur_step: float,
+         record_time: float,
+         technique: str,
+         dc: Type[Technique],
+         **kwargs,
+     )-> None:
++        dur_step = [dur_step]
++        app_step = [app_step]
+         technique_dict: dict = globals()[technique + "_DICT"].copy()
+         technique_dict.update(
+             {
+@@ -105,8 +107,8 @@
+     def set_parameters(
+         self,
+         record_time: float,
+-        applied_step: list,
+-        duration_step: list,
++        applied_step: float,
++        duration_step: float,
+         technique: str,
+         dc_condition: Callable[[], bool],
+         **kwargs,
+Index: .idea/misc.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"Black\">\r\n    <option name=\"sdkName\" value=\"Python 3.10 (nupylab)\" />\r\n  </component>\r\n  <component name=\"ProjectRootManager\" version=\"2\" project-jdk-name=\"Python 3.10 (nupylab)\" project-jdk-type=\"Python SDK\" />\r\n  <component name=\"PythonCompatibilityInspectionAdvertiser\">\r\n    <option name=\"version\" value=\"3\" />\r\n  </component>\r\n</project>
+===================================================================
+diff --git a/.idea/misc.xml b/.idea/misc.xml
+--- a/.idea/misc.xml	(revision fd535493a60c110e94091b2d1d5fd22180efb27a)
++++ b/.idea/misc.xml	(date 1774379129681)
+@@ -3,7 +3,7 @@
+   <component name="Black">
+     <option name="sdkName" value="Python 3.10 (nupylab)" />
+   </component>
+-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (nupylab)" project-jdk-type="Python SDK" />
++  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (2)" project-jdk-type="Python SDK" />
+   <component name="PythonCompatibilityInspectionAdvertiser">
+     <option name="version" value="3" />
+   </component>
+Index: .idea/nupylab_dv.iml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<module type=\"PYTHON_MODULE\" version=\"4\">\r\n  <component name=\"NewModuleRootManager\">\r\n    <content url=\"file://$MODULE_DIR$\" />\r\n    <orderEntry type=\"jdk\" jdkName=\"Python 3.10 (nupylab)\" jdkType=\"Python SDK\" />\r\n    <orderEntry type=\"sourceFolder\" forTests=\"false\" />\r\n  </component>\r\n  <component name=\"PyDocumentationSettings\">\r\n    <option name=\"format\" value=\"PLAIN\" />\r\n    <option name=\"myDocStringFormat\" value=\"Plain\" />\r\n  </component>\r\n</module>
+===================================================================
+diff --git a/.idea/nupylab_dv.iml b/.idea/nupylab_dv.iml
+--- a/.idea/nupylab_dv.iml	(revision fd535493a60c110e94091b2d1d5fd22180efb27a)
++++ b/.idea/nupylab_dv.iml	(date 1774379129688)
+@@ -1,12 +1,10 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <module type="PYTHON_MODULE" version="4">
+   <component name="NewModuleRootManager">
+-    <content url="file://$MODULE_DIR$" />
+-    <orderEntry type="jdk" jdkName="Python 3.10 (nupylab)" jdkType="Python SDK" />
++    <content url="file://$MODULE_DIR$">
++      <excludeFolder url="file://$MODULE_DIR$/.venv" />
++    </content>
++    <orderEntry type="jdk" jdkName="Python 3.13 (2)" jdkType="Python SDK" />
+     <orderEntry type="sourceFolder" forTests="false" />
+   </component>
+-  <component name="PyDocumentationSettings">
+-    <option name="format" value="PLAIN" />
+-    <option name="myDocStringFormat" value="Plain" />
+-  </component>
+ </module>
+\ No newline at end of file

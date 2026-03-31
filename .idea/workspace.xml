@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="9ccad2b2-4c88-4683-b385-9a89551369bb" name="Changes" comment="Added option to select CP or CA on left bar.">
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="BEF_experiment" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;dveigs&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/dveigs/nupylab.git&quot;,
+    &quot;accountId&quot;: &quot;7800d452-582c-476a-92b0-64107137764d&quot;
+  }
+}</component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 0
+}</component>
+  <component name="ProjectId" id="3B7l1fzkMFSefq2tpD7sDI4ZeKm" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.Biologic_Only.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Manual_EIS.executor&quot;: &quot;Run&quot;,
+    &quot;Python.biologic.executor&quot;: &quot;Run&quot;,
+    &quot;Python.eurotherm_furnace_gui.executor&quot;: &quot;Run&quot;,
+    &quot;Python.s8_combined.executor&quot;: &quot;Run&quot;,
+    &quot;Python.s8_gui.executor&quot;: &quot;Run&quot;,
+    &quot;Python.s8_w_CA.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;Aarav__GUIs&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RunManager">
+    <configuration default="true" type="tests" factoryName="Autodetect">
+      <module name="nupylab_dv" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="tests" factoryName="Doctests">
+      <module name="nupylab_dv" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="" />
+      <option name="CLASS_NAME" value="" />
+      <option name="METHOD_NAME" value="" />
+      <option name="FOLDER_NAME" value="" />
+      <option name="TEST_TYPE" value="TEST_SCRIPT" />
+      <option name="PATTERN" value="" />
+      <option name="USE_PATTERN" value="false" />
+      <method v="2" />
+    </configuration>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-4e2b1448bda8-9a97661f3031-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.27397.106" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="9ccad2b2-4c88-4683-b385-9a89551369bb" name="Changes" comment="" />
+      <created>1773847775209</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1773847775209</updated>
+    </task>
+    <task id="LOCAL-00001" summary="Added functionality to swap between Biologic models from the GUI and capitalized the call to frequency so that would actually work.">
+      <option name="closed" value="true" />
+      <created>1773858340035</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1773858340035</updated>
+    </task>
+    <task id="LOCAL-00002" summary="Added the capabililty to run EIS under bias. Needs checking for functionality with Biologic">
+      <option name="closed" value="true" />
+      <created>1773934954614</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1773934954614</updated>
+    </task>
+    <task id="LOCAL-00003" summary="Added extra t and f options to the boolean mapping">
+      <option name="closed" value="true" />
+      <created>1773945801299</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1773945801299</updated>
+    </task>
+    <task id="LOCAL-00004" summary="Changed Class name for DC instrument file">
+      <option name="closed" value="true" />
+      <created>1773945839682</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1773945839682</updated>
+    </task>
+    <task id="LOCAL-00005" summary="Created new gui for only Biologic Control">
+      <option name="closed" value="true" />
+      <created>1773945914913</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1773945914913</updated>
+    </task>
+    <task id="LOCAL-00006" summary="Fixed instrument file to change float inputs to lists for DC methods">
+      <option name="closed" value="true" />
+      <created>1774029466881</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1774029466881</updated>
+    </task>
+    <task id="LOCAL-00007" summary="Updated class reference name for instrument file. Confirmed this works!">
+      <option name="closed" value="true" />
+      <created>1774029602355</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1774029602355</updated>
+    </task>
+    <task id="LOCAL-00008" summary="Added option to select CP or CA on left bar.">
+      <option name="closed" value="true" />
+      <created>1774030937775</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1774030937775</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Added option to select CP or CA on left bar.">
+      <option name="closed" value="true" />
+      <created>1774379038938</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1774379038938</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
+    <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="Aarav_GUIs" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Added functionality to swap between Biologic models from the GUI and capitalized the call to frequency so that would actually work." />
+    <MESSAGE value="Added the capabililty to run EIS under bias. Needs checking for functionality with Biologic&#10;3/19/26 2:24pm confirmed appears to work!" />
+    <MESSAGE value="Added extra t and f options to the boolean mapping" />
+    <MESSAGE value="Changed Class name for DC instrument file" />
+    <MESSAGE value="Created new gui for only Biologic Control" />
+    <MESSAGE value="Added the capabililty to run EIS under bias. Needs checking for functionality with Biologic&#10;3/19/26 2:24pm confirmed appears to work!" />
+    <MESSAGE value="Fixed instrument file to change float inputs to lists for DC methods" />
+    <MESSAGE value="Updated class reference name for instrument file. Confirmed this works!" />
+    <MESSAGE value="Added option to select CP or CA on left bar." />
+    <MESSAGE value="unversioned files" />
+    <option name="LAST_COMMIT_MESSAGE" value="unversioned files" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/nupylab/utilities/nupylab_window.py</url>
+          <line>4</line>
+          <option name="timeStamp" value="1" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+</project>
