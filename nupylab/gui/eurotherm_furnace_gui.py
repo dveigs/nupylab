@@ -3,20 +3,13 @@
 eurotherm_furnace_gui.py
 NUPyLab - Standalone Eurotherm Furnace Control GUI
 
-Connects to a Eurotherm 2200 / 2400 / 3216 over RS-485 (USB-serial adapter),
-reads live temperature and heater power output, ramps the setpoint at a
-controlled rate, and optionally logs everything to a CSV file.
+Connects to a Eurotherm 2200 / 2400 / 3216 over RS-485, reads live
+temperature and heater output, ramps the setpoint at a controlled rate,
+and optionally logs to CSV.
 
-Ramping mirrors the approach in NUPyLab's instruments/heater/ layer:
-  * 2200 series: setpoint_rate_limit + setpoint2 + program_status = "run"
-  * 2400 series: programs/segments API
-  * 3216 series: segments API
-This hands the ramp off to the controller's built-in programmer instead of
-writing the setpoint every second from Python, which was the cause of the
-90-second crash seen during testing.
+Ramping uses the controller's built-in programmer - matches instruments/heater/.
 
-Dependencies: PyQt6 or PyQt5, pyqtgraph, numpy
-              + nupylab drivers (eurotherm2200 / 2400 / 3216) for real hardware
+Dependencies: PyQt5 or PyQt6, pyqtgraph, numpy, nupylab drivers
 """
 
 import sys
@@ -26,29 +19,16 @@ import threading
 from datetime import datetime
 from collections import deque
 
-# Try to import the NUPyLab Eurotherm drivers.
-# First: installed as part of the nupylab package (normal lab usage).
-# Second: driver files sitting alongside this file (standalone dev).
-# If neither works, fall back to SimulatedEurotherm defined below.
-try:
-    try:
-        from nupylab.drivers.eurotherm2200 import Eurotherm2200
-        from nupylab.drivers.eurotherm2400 import Eurotherm2400
-        from nupylab.drivers.eurotherm3216 import Eurotherm3216
-    except ImportError:
-        from eurotherm2200 import Eurotherm2200  # type: ignore
-        from eurotherm2400 import Eurotherm2400  # type: ignore
-        from eurotherm3216 import Eurotherm3216  # type: ignore
-    HARDWARE_AVAILABLE = True
-except ImportError:
-    HARDWARE_AVAILABLE = False
-    print("[INFO] Eurotherm drivers not found - running in simulation mode.")
+from nupylab.drivers.eurotherm2200 import Eurotherm2200
+from nupylab.drivers.eurotherm2400 import Eurotherm2400
+from nupylab.drivers.eurotherm3216 import Eurotherm3216
 
-# Pull available serial ports for the dropdown.
-# Changed from a plain text box to a combo populated by list_resources() so the port
-# shows up automatically when the adapter is plugged in - same as the S8 GUI does it.
-# list_resources() returns VISA-style names like ASRL5::INSTR; conversion happens in _connect.
-# Falls back to serial.tools.list_ports if the nupylab utility is not present.
+EUROTHERM_DRIVER_MAP = {
+    "Eurotherm 2200": Eurotherm2200,
+    "Eurotherm 2400": Eurotherm2400,
+    "Eurotherm 3216": Eurotherm3216,
+}
+
 try:
     from nupylab.utilities import list_resources as _list_resources
     _SERIAL_PORTS = _list_resources()
@@ -59,12 +39,10 @@ except Exception:
     except Exception:
         _SERIAL_PORTS = []
 if not _SERIAL_PORTS:
-    _SERIAL_PORTS = ["/dev/cu.usbserial"]
+    _SERIAL_PORTS = ["COM1"]
 
 import numpy as np
 
-# NUPyLab runs on PyQt5 on the lab computer but the original code was written with PyQt6.
-# This try/except loads whichever version is installed so the same file works on both.
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget,
@@ -86,9 +64,6 @@ except ImportError:
     from PyQt5.QtCore import pyqtSignal, QObject
     _PYQT6 = False
 
-# PyQt6 moved enums into nested classes; PyQt5 had them flat.
-# Rather than scattering if/else checks throughout the file, set aliases here once.
-# _HLINE, _MSGBOX_YES, _MSGBOX_CANCEL then work the same regardless of which Qt is loaded.
 if _PYQT6:
     _HLINE         = QFrame.Shape.HLine
     _MSGBOX_YES    = QMessageBox.StandardButton.Yes
@@ -101,167 +76,17 @@ else:
 import pyqtgraph as pg
 
 
-# ---------------------------------------------------------------------------
-# Model list
-# ---------------------------------------------------------------------------
-
-EUROTHERM_MODEL_NAMES = ["Eurotherm 2200", "Eurotherm 2400", "Eurotherm 3216"]
-
-if HARDWARE_AVAILABLE:
-    EUROTHERM_DRIVER_MAP = {
-        "Eurotherm 2200": Eurotherm2200,
-        "Eurotherm 2400": Eurotherm2400,
-        "Eurotherm 3216": Eurotherm3216,
-    }
-
-# Lab safety cap - agreed with Danielle
+EUROTHERM_MODEL_NAMES   = ["Eurotherm 2200", "Eurotherm 2400", "Eurotherm 3216"]
 MAX_RAMP_RATE_C_PER_MIN = 10.0
+RAMP_DONE_STATES        = frozenset({"off", "end", "complete"})
+TEMP_SANITY_MIN         = -50.0
+TEMP_SANITY_MAX         = 1800.0
 
-# program_status values across all three models that mean the ramp has ended
-RAMP_DONE_STATES = frozenset({"off", "end", "complete"})
-
-# First reading outside this range almost always means an Eurotherm decimal
-# place configuration mismatch rather than a real measurement.
-TEMP_SANITY_MIN = -50.0
-TEMP_SANITY_MAX = 1800.0
-
-# Color scheme - each trace shares its color with its Y-axis
-TEMP_COLOR  = "#ff5555"   # red  - temperature
-POWER_COLOR = "#55aaff"   # blue - power output
-
-LIVE_BG    = "#0a0a0a"
-LIVE_FG    = "#00e676"
-EDIT_STYLE = "background-color: #dff0f7; color: #111111;"
-
-
-# ---------------------------------------------------------------------------
-# Simulation driver
-# ---------------------------------------------------------------------------
-
-class SimulatedEurotherm:
-    """Stand-in for testing without hardware connected.
-
-    Matches the same property interface as the real NUPyLab drivers so everything
-    else in the file (DataWorker, RampManager, the GUI) works identically whether
-    hardware is connected or not. Also simulates the 2200-series programmer behavior
-    so working_setpoint steps realistically during a simulated ramp.
-    """
-
-    def __init__(self):
-        self._sim_temp   = 22.0
-        self._working_sp = 22.0   # intermediate SP, steps toward _target
-        self._target     = 22.0   # setpoint2 - where the ramp is headed
-        self._direct_sp  = 22.0   # target_setpoint (register 2, manual mode)
-        self._rate_limit = 0.0    # C/min; 0 = no rate limit
-        self._status     = "off"  # program_status
-        self._sp1        = 22.0
-        self._sp2        = 22.0
-        self._last_t     = time.time()
-
-    def _advance_working_sp(self):
-        """Move _working_sp toward _target at _rate_limit C/min."""
-        now = time.time()
-        dt  = now - self._last_t
-        self._last_t = now
-        if self._status in ("run", "ramp") and self._rate_limit > 0:
-            step = self._rate_limit / 60.0 * dt
-            if self._working_sp < self._target:
-                self._working_sp = min(self._working_sp + step, self._target)
-            else:
-                self._working_sp = max(self._working_sp - step, self._target)
-            if abs(self._working_sp - self._target) < 0.05:
-                self._working_sp = self._target
-                self._status = "end"
-
-    @property
-    def process_value(self) -> float:
-        self._advance_working_sp()
-        sp = self._working_sp if self._status in ("run", "ramp") else self._direct_sp
-        self._sim_temp += 0.05 * (sp - self._sim_temp)
-        self._sim_temp += float(np.random.normal(0, 0.1))
-        return round(self._sim_temp, 2)
-
-    @property
-    def output_level(self) -> float:
-        sp = self._working_sp if self._status in ("run", "ramp") else self._direct_sp
-        error = sp - self._sim_temp
-        return round(max(0.0, min(100.0, error * 2.0 + float(np.random.normal(0, 0.3)))), 1)
-
-    @property
-    def working_setpoint(self) -> float:
-        return round(self._working_sp, 2)
-
-    @property
-    def program_status(self) -> str:
-        return self._status
-
-    @program_status.setter
-    def program_status(self, val: str):
-        if val == "run":
-            self._status     = "ramp"
-            self._working_sp = self._sp1
-            self._target     = self._sp2
-            self._last_t     = time.time()
-        elif val == "reset":
-            self._status = "off"
-
-    @property
-    def target_setpoint(self) -> float:
-        return self._direct_sp
-
-    @target_setpoint.setter
-    def target_setpoint(self, val: float):
-        self._direct_sp  = val
-        self._working_sp = val
-
-    @property
-    def setpoint_rate_limit(self) -> float:
-        return self._rate_limit
-
-    @setpoint_rate_limit.setter
-    def setpoint_rate_limit(self, val: float):
-        self._rate_limit = val
-
-    @property
-    def setpoint1(self) -> float:
-        return self._sp1
-
-    @setpoint1.setter
-    def setpoint1(self, val: float):
-        self._sp1 = val
-
-    @property
-    def setpoint2(self) -> float:
-        return self._sp2
-
-    @setpoint2.setter
-    def setpoint2(self, val: float):
-        self._sp2 = val
-
-    # Stubs for properties called in _start_2200 but not relevant to simulation
-    @property
-    def active_setpoint(self) -> int:
-        return 1
-
-    @active_setpoint.setter
-    def active_setpoint(self, val: int):
-        pass
-
-    @property
-    def end_type(self) -> str:
-        return "dwell"
-
-    @end_type.setter
-    def end_type(self, val: str):
-        pass
-
-    @property
-    def dwell_time(self) -> float:
-        return 1.0
-
-    @dwell_time.setter
-    def dwell_time(self, val: float):
-        pass
+TEMP_COLOR  = "#ff5555"
+POWER_COLOR = "#55aaff"
+LIVE_BG     = "#0a0a0a"
+LIVE_FG     = "#00e676"
+EDIT_STYLE  = "background-color: #dff0f7; color: #111111;"
 
 
 # ---------------------------------------------------------------------------
@@ -269,19 +94,8 @@ class SimulatedEurotherm:
 # ---------------------------------------------------------------------------
 
 class DataWorker(QObject):
-    """Polls the furnace on a background thread every interval_s seconds.
+    """Polls the furnace on a background thread every interval_s seconds."""
 
-    Reading from a serial port blocks for up to 1 second, so running it on
-    a background thread keeps the window responsive. Results come back via
-    Qt signals because widget updates are not allowed from background threads.
-
-    Emits (temperature_C, power_pct, working_setpoint_C, program_status).
-    program_status is used by the GUI to detect when a hardware ramp ends.
-    """
-
-    # signal now carries 4 values: temp, power, working_setpoint, and program_status.
-    # program_status was added so the GUI can tell when a hardware ramp finishes
-    # on its own without needing a separate polling check.
     data_ready     = pyqtSignal(float, float, float, str)
     error_occurred = pyqtSignal(str)
 
@@ -293,9 +107,7 @@ class DataWorker(QObject):
 
     def start(self):
         self._active = True
-        # daemon=True: thread dies automatically when the main window closes
-        t = threading.Thread(target=self._loop, daemon=True)
-        t.start()
+        threading.Thread(target=self._loop, daemon=True).start()
 
     def stop(self):
         self._active = False
@@ -306,8 +118,6 @@ class DataWorker(QObject):
                 temp       = self.driver.process_value
                 power      = self.driver.output_level
                 working_sp = self.driver.working_setpoint
-                # program_status tells us when a hardware ramp has ended.
-                # Most drivers have this; catch any exception and default to "".
                 try:
                     status = self.driver.program_status
                 except Exception:
@@ -323,21 +133,7 @@ class DataWorker(QObject):
 # ---------------------------------------------------------------------------
 
 class RampManager(QObject):
-    """Configures and starts the Eurotherm's built-in ramp programmer.
-
-    The original approach wrote target_setpoint every second from a Python loop.
-    That caused a NoResponseError crash after ~90 seconds when the controller
-    briefly stopped answering writes. This version matches what instruments/heater/
-    already does: write the ramp parameters once, then send program_status = "run"
-    and let the controller handle it internally. No more continuous writes.
-
-    Model-specific setup:
-      * 2200 series: setpoint_rate_limit + setpoint2 + program_status = "run"
-      * 2400 series: programs/segments API
-      * 3216 series: segments API
-
-    ramp_error is emitted if any setup write fails so the GUI can show it.
-    """
+    """Writes ramp parameters once and starts the controller's built-in program."""
 
     ramp_error = pyqtSignal(str)
 
@@ -346,29 +142,15 @@ class RampManager(QObject):
         self.driver     = driver
         self.model_name = model_name
 
-    def start(self, target: float, rate_c_per_min: float, current_temp: float):
-        """Configure the built-in ramp program and start it.
-
-        Runs in a daemon thread so the Modbus setup writes do not block the GUI.
-        """
-        t = threading.Thread(
-            target=self._setup,
-            args=(target, rate_c_per_min, current_temp),
-            daemon=True,
-        )
-        t.start()
+    def start(self, target: float, rate: float, current_temp: float):
+        threading.Thread(
+            target=self._setup, args=(target, rate, current_temp), daemon=True
+        ).start()
 
     def stop(self, current_temp: float):
-        """Reset the program and hold at the current temperature.
-
-        Also runs in a thread so the GUI does not freeze during the writes.
-        """
-        t = threading.Thread(
-            target=self._teardown,
-            args=(current_temp,),
-            daemon=True,
-        )
-        t.start()
+        threading.Thread(
+            target=self._teardown, args=(current_temp,), daemon=True
+        ).start()
 
     def _setup(self, target: float, rate: float, current_temp: float):
         try:
@@ -377,7 +159,6 @@ class RampManager(QObject):
             elif "3216" in self.model_name:
                 self._start_3216(target, rate, current_temp)
             else:
-                # 2200 series (covers 2216, 2204, etc.)
                 self._start_2200(target, rate, current_temp)
         except Exception as exc:
             self.ramp_error.emit(str(exc))
@@ -387,48 +168,39 @@ class RampManager(QObject):
             self.driver.program_status = "reset"
         except Exception:
             pass
-        # Write current temperature as the new setpoint so the controller
-        # holds where it is rather than jumping to SP1 after the reset.
         try:
             self.driver.target_setpoint = current_temp
         except Exception:
             pass
 
     def _start_2200(self, target: float, rate: float, current_temp: float):
-        # matches the sequence in instruments/heater/eurotherm2200.py exactly
-        self.driver.program_status    = "reset"
-        self.driver.active_setpoint   = 1
-        self.driver.end_type          = "dwell"
-        # SP1 is set to current temp so the ramp starts from where the furnace
-        # actually is, not from whatever SP1 was left at previously
-        self.driver.setpoint1         = current_temp
+        self.driver.program_status      = "reset"
+        self.driver.active_setpoint     = 1
+        self.driver.end_type            = "dwell"
+        self.driver.setpoint1           = current_temp
         self.driver.setpoint_rate_limit = rate
-        self.driver.setpoint2         = target
-        self.driver.dwell_time        = 1   # 1 second minimum dwell
-        self.driver.program_status    = "run"
+        self.driver.setpoint2           = target
+        self.driver.dwell_time          = 1
+        self.driver.program_status      = "run"
 
     def _start_2400(self, target: float, rate: float):
-        # matches instruments/heater/eurotherm2400.py
         self.driver.program_status = "reset"
         self.driver.current_program = 1
         self.driver.programs[1].refresh()
-        self.driver.programs[1].segments[1]["segment type"] = "ramp rate"
-        self.driver.programs[1].segments[1]["rate"]             = rate
-        self.driver.programs[1].segments[1]["target setpoint"]  = target
-        self.driver.programs[1].segments[2]["segment type"] = "dwell"
-        self.driver.programs[1].segments[2]["duration"]         = 1
-        self.driver.programs[1].segments[3]["segment type"] = "end"
-        self.driver.programs[1].segments[3]["end type"]         = "dwell"
+        self.driver.programs[1].segments[1]["segment type"]    = "ramp rate"
+        self.driver.programs[1].segments[1]["rate"]            = rate
+        self.driver.programs[1].segments[1]["target setpoint"] = target
+        self.driver.programs[1].segments[2]["segment type"]    = "dwell"
+        self.driver.programs[1].segments[2]["duration"]        = 1
+        self.driver.programs[1].segments[3]["segment type"]    = "end"
+        self.driver.programs[1].segments[3]["end type"]        = "dwell"
         self.driver.program_status = "run"
 
     def _start_3216(self, target: float, rate: float, current_temp: float):
-        # matches instruments/heater/eurotherm3216.py
         self.driver.program_status = "reset"
         self.driver.end_type = "dwell"
         for segment in self.driver.segments:
             segment.clear()
-        # 3216 runs all 8 segments sequentially; put the actual ramp in the last one
-        # so the others (all cleared to 0) pass through quickly
         self.driver.segments[-1].target_setpoint = target
         self.driver.segments[-1].ramp_rate       = rate
         self.driver.segments[-1].dwell           = 1
@@ -441,6 +213,10 @@ class RampManager(QObject):
 
 class FurnaceGUI(QMainWindow):
 
+    _reconnect_success = pyqtSignal()
+    _reconnect_failed  = pyqtSignal(str)
+    _reconnect_status  = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
 
@@ -449,21 +225,21 @@ class FurnaceGUI(QMainWindow):
         self.ramp_mgr    = None
         self._log_file   = None
         self._log_writer = None
-        self._t0         = None    # set at connect - used for graph x-axis
-        self._log_t0     = None    # set at Start Logging - CSV elapsed resets here
+        self._t0         = None
+        self._log_t0     = None
         self._connected  = False
         self._logging    = False
-        self._ramp_running = False   # True between Begin Ramp and completion/stop
-        self._model_name   = ""      # tracks which model is connected
+        self._ramp_running      = False
+        self._model_name        = ""
+        self._user_disconnected = False
+        self._reconnecting      = False
 
-        # Rolling graph buffer - 600 points at 1 s/reading = 10 min of history.
-        # deque auto-drops the oldest entry when maxlen is reached.
         N = 600
         self._times  = deque(maxlen=N)
         self._temps  = deque(maxlen=N)
         self._powers = deque(maxlen=N)
 
-        self._last_temp = 25.0   # updated every poll; used as ramp starting point
+        self._last_temp = 25.0
 
         self._build_ui()
         self.setWindowTitle("NUPyLab - Eurotherm Furnace Control")
@@ -528,8 +304,6 @@ class FurnaceGUI(QMainWindow):
         self.browse_btn.clicked.connect(self._browse_file)
         v.addWidget(self.browse_btn)
 
-        # Logging is separate from connecting so the user can monitor
-        # temperature before deciding to record anything to disk.
         self.log_btn = QPushButton("Start Logging")
         self.log_btn.setCheckable(True)
         self.log_btn.setEnabled(False)
@@ -548,15 +322,6 @@ class FurnaceGUI(QMainWindow):
         return w
 
     def _controls_row(self) -> QWidget:
-        """
-        Layout left to right:
-          Current T   (dark, live)
-          Current Power (dark, live)
-          Current SP  (dark, live) - what the controller is targeting right now
-          Set Temp    (light blue, user input)
-          Ramp Rate   (light blue, user input)
-          Connect / Begin Ramp buttons
-        """
         box = QGroupBox("Furnace Parameters")
         g = QGridLayout(box)
         g.setSpacing(12)
@@ -580,11 +345,6 @@ class FurnaceGUI(QMainWindow):
         self.power_display.setMinimumWidth(100)
         g.addWidget(self.power_display, 1, 1)
 
-        # working_setpoint (register 5) shows the intermediate SP the controller
-        # is targeting right now. During a ramp this steps toward Set Temp while
-        # Current T shows the actual measured temperature lagging behind it.
-        # Added per Danielle's feedback - makes it easier to see how far the ramp
-        # has progressed vs just watching the thermometer.
         g.addWidget(QLabel("Current SP (C)"), 0, 2)
         self.sp_display = QLineEdit("---")
         self.sp_display.setReadOnly(True)
@@ -617,21 +377,7 @@ class FurnaceGUI(QMainWindow):
 
         return box
 
-
     def _graph_panel(self) -> QWidget:
-        """
-        Live plot with two independent Y-axes:
-          Left  (red)  - Temperature in C, auto-scales
-          Right (blue) - Power output, fixed 0-100 %
-          Bottom       - Elapsed time in minutes
-
-        pyqtgraph does not support two Y-axes natively. The fix is to create
-        a second ViewBox and layer it on top of the main plot, then link the
-        right axis to it. _sync_power_axis keeps both layers aligned on resize.
-
-        X-axis bounds can be adjusted via the min/max fields below the graph.
-        Leave both at 0 to let pyqtgraph auto-scale the time axis.
-        """
         box = QGroupBox("Live Data - Temperature && Power Output")
         v = QVBoxLayout(box)
 
@@ -659,7 +405,7 @@ class FurnaceGUI(QMainWindow):
         self.plot.getViewBox().sigResized.connect(self._sync_power_axis)
         self._sync_power_axis()
 
-        self.curve_temp = self.plot.plot(pen=pg.mkPen(color=TEMP_COLOR, width=2))
+        self.curve_temp  = self.plot.plot(pen=pg.mkPen(color=TEMP_COLOR, width=2))
         self.curve_power = pg.PlotCurveItem(pen=pg.mkPen(color=POWER_COLOR, width=2))
         self._power_vb.addItem(self.curve_power)
 
@@ -669,9 +415,6 @@ class FurnaceGUI(QMainWindow):
 
         v.addWidget(self.plot)
 
-        # X-axis range fields added so you can zoom into a specific time window
-        # without having to use the mouse scroll on the graph.
-        # Both fields default to 0, which just leaves pyqtgraph on auto-scale.
         range_row = QHBoxLayout()
         range_row.addWidget(QLabel("X-axis min (min):"))
         self.xmin_edit = QLineEdit("0")
@@ -717,7 +460,6 @@ class FurnaceGUI(QMainWindow):
         f.setFrameShape(_HLINE)
         return f
 
-
     # -----------------------------------------------------------------------
     # File picker
     # -----------------------------------------------------------------------
@@ -743,36 +485,24 @@ class FurnaceGUI(QMainWindow):
         model = self.model_combo.currentText()
         port  = self.port_edit.currentText().strip()
 
-        # Convert VISA-style port names (ASRL5::INSTR) to real Windows COM port names.
-        # list_resources() returns VISA format; minimalmodbus needs COM5 or /dev/ttyS5.
-        # Using the same replace() approach as instruments/heater/eurotherm2200.py.
         if "COM" not in port:
             port = port.replace("ASRL", "COM").replace("::INSTR", "")
 
         try:
             addr = int(self.addr_edit.text().strip())
         except ValueError:
-            QMessageBox.critical(
-                self, "Input Error",
-                "Modbus address must be an integer (usually 1)."
-            )
+            QMessageBox.critical(self, "Input Error",
+                                 "Modbus address must be an integer (usually 1).")
             self.connect_btn.setChecked(False)
             return
 
         try:
-            if HARDWARE_AVAILABLE:
-                driver_class = EUROTHERM_DRIVER_MAP[model]
-                self.driver  = driver_class(port, addr)
-            else:
-                self.driver = SimulatedEurotherm()
-
-            first_temp = self.driver.process_value
-
+            driver_class = EUROTHERM_DRIVER_MAP[model]
+            self.driver  = driver_class(port, addr)
+            first_temp   = self.driver.process_value
         except Exception as exc:
-            QMessageBox.critical(
-                self, "Connection Failed",
-                f"Could not connect to {model} on {port}:\n{exc}"
-            )
+            QMessageBox.critical(self, "Connection Failed",
+                                 f"Could not connect to {model} on {port}:\n{exc}")
             self.connect_btn.setChecked(False)
             self.driver = None
             return
@@ -780,22 +510,30 @@ class FurnaceGUI(QMainWindow):
         if not (TEMP_SANITY_MIN <= first_temp <= TEMP_SANITY_MAX):
             QMessageBox.warning(
                 self, "Unusual Reading",
-                f"First temperature reading is {first_temp:.1f} C, which is outside "
-                f"the expected range ({TEMP_SANITY_MIN:.0f} to {TEMP_SANITY_MAX:.0f} C).\n\n"
-                "Check the Eurotherm decimal place setting in its comms menu."
+                f"First reading is {first_temp:.1f} C - check the Eurotherm "
+                "decimal place setting in its comms menu."
             )
 
-        self._model_name = model
-        interval = self._poll_interval()
-        self.worker = DataWorker(self.driver, interval_s=interval)
+        self._model_name        = model
+        self._t0                = time.time()
+        self._connected         = True
+        self._user_disconnected = False
+        self._reconnecting      = False
+
+        self._times.clear()
+        self._temps.clear()
+        self._powers.clear()
+        self.curve_temp.setData([], [])
+        self.curve_power.setData([], [])
+
+        self.worker = DataWorker(self.driver, interval_s=self._poll_interval())
         self.worker.data_ready.connect(self._on_data)
         self.worker.error_occurred.connect(self._on_worker_error)
 
-        # _t0 must be set before worker.start(). The worker fires its first
-        # signal almost immediately, and _on_data uses _t0. If it is still
-        # None at that point the elapsed-time calculation crashes.
-        self._t0        = time.time()
-        self._connected = True
+        self._reconnect_success.connect(self._on_reconnect_success)
+        self._reconnect_failed.connect(self._on_reconnect_failed)
+        self._reconnect_status.connect(lambda msg: self.statusBar().showMessage(msg))
+
         self.worker.start()
 
         self.connect_btn.setText("Disconnect")
@@ -804,20 +542,18 @@ class FurnaceGUI(QMainWindow):
         self.model_combo.setEnabled(False)
         self.port_edit.setEnabled(False)
         self.addr_edit.setEnabled(False)
-
         self.statusBar().showMessage(
             f"Connected - {model} on {port}, address {addr}."
         )
 
-
     def _disconnect(self):
-        # Stop logging before stopping the thread that writes to it.
-        # Stop the thread before closing the serial port it reads from.
+        self._user_disconnected = True
+        self._reconnecting      = False
+
         if self._logging:
             self._stop_logging()
 
         if self._ramp_running and self.ramp_mgr:
-            # Reset the program cleanly before tearing down
             self.ramp_mgr.stop(self._last_temp)
             time.sleep(0.3)
 
@@ -849,7 +585,6 @@ class FurnaceGUI(QMainWindow):
         self.model_combo.setEnabled(True)
         self.port_edit.setEnabled(True)
         self.addr_edit.setEnabled(True)
-
         self.statusBar().showMessage("Disconnected.")
 
     # -----------------------------------------------------------------------
@@ -865,10 +600,8 @@ class FurnaceGUI(QMainWindow):
     def _start_logging(self):
         path = self.filepath_edit.text().strip()
         if not path:
-            QMessageBox.warning(
-                self, "No File Set",
-                "Use Browse... to choose a log file before starting logging."
-            )
+            QMessageBox.warning(self, "No File Set",
+                                "Use Browse... to choose a log file before starting.")
             self.log_btn.setChecked(False)
             return
         try:
@@ -877,9 +610,6 @@ class FurnaceGUI(QMainWindow):
             self._log_writer.writerow(
                 ["Timestamp", "Elapsed_min", "Temperature_C", "Power_pct", "Working_SP_C"]
             )
-            # _log_t0 is set here, not at connect time. This means elapsed minutes
-            # in the CSV always starts at 0 from the moment you hit Start Logging,
-            # so the file clock matches when you actually started recording.
             self._log_t0  = time.time()
             self._logging = True
             self.log_btn.setText("Stop Logging")
@@ -905,7 +635,6 @@ class FurnaceGUI(QMainWindow):
         self.browse_btn.setEnabled(True)
         self.statusBar().showMessage("Logging stopped.")
 
-
     # -----------------------------------------------------------------------
     # Ramp
     # -----------------------------------------------------------------------
@@ -920,22 +649,19 @@ class FurnaceGUI(QMainWindow):
         try:
             target = float(self.set_temp_edit.text())
         except ValueError:
-            QMessageBox.critical(self, "Input Error",
-                                 "Set Temperature must be a number.")
+            QMessageBox.critical(self, "Input Error", "Set Temperature must be a number.")
             self.ramp_btn.setChecked(False)
             return
 
         try:
             rate = float(self.ramp_rate_edit.text())
         except ValueError:
-            QMessageBox.critical(self, "Input Error",
-                                 "Ramp Rate must be a number.")
+            QMessageBox.critical(self, "Input Error", "Ramp Rate must be a number.")
             self.ramp_btn.setChecked(False)
             return
 
         if rate <= 0:
-            QMessageBox.critical(self, "Input Error",
-                                 "Ramp Rate must be greater than 0.")
+            QMessageBox.critical(self, "Input Error", "Ramp Rate must be greater than 0.")
             self.ramp_btn.setChecked(False)
             return
 
@@ -958,7 +684,6 @@ class FurnaceGUI(QMainWindow):
         self.ramp_mgr.ramp_error.connect(self._on_ramp_error)
         self.ramp_mgr.start(target, rate, self._last_temp)
         self._ramp_running = True
-
         self.ramp_btn.setText("Stop Ramp")
         self.statusBar().showMessage(
             f"Ramping to {target:.1f} C at {rate:.1f} C/min ..."
@@ -966,10 +691,6 @@ class FurnaceGUI(QMainWindow):
 
     def _stop_ramp(self):
         if self.ramp_mgr:
-            # Sends program_status = "reset" to the controller, then writes the
-            # current temperature as the new setpoint. Without this second step
-            # the Eurotherm keeps its old goal temperature and the heaters stay on
-            # trying to reach it even after you've clicked stop.
             self.ramp_mgr.stop(self._last_temp)
         self._ramp_running = False
         self.ramp_btn.setChecked(False)
@@ -982,11 +703,10 @@ class FurnaceGUI(QMainWindow):
         self._ramp_running = False
         self.ramp_btn.setChecked(False)
         self.ramp_btn.setText("Begin Ramp")
-        self.statusBar().showMessage(f"Ramp stopped - error: {msg}")
-
+        self.statusBar().showMessage(f"Ramp error: {msg}")
 
     # -----------------------------------------------------------------------
-    # Data slot - fires every poll interval via signal from DataWorker
+    # Data slot
     # -----------------------------------------------------------------------
 
     def _on_data(self, temp: float, power: float, working_sp: float, status: str):
@@ -995,30 +715,22 @@ class FurnaceGUI(QMainWindow):
         self.sp_display.setText(f"{working_sp:.1f}")
         self._last_temp = temp
 
-        # Check if the hardware ramp finished on its own (controller reached target).
-        # RAMP_DONE_STATES covers the end-of-program status strings across all three models.
-        # This auto-resets the button so it doesn't stay stuck saying "Stop Ramp".
         if self._ramp_running and status in RAMP_DONE_STATES:
             self._ramp_running = False
             self.ramp_btn.setChecked(False)
             self.ramp_btn.setText("Begin Ramp")
-            self.statusBar().showMessage("Ramp complete - target temperature reached.")
+            self.statusBar().showMessage("Ramp complete.")
 
-        # x-axis: time since connect, in minutes
         elapsed_min = (time.time() - self._t0) / 60.0
-
         self._times.append(elapsed_min)
         self._temps.append(temp)
         self._powers.append(power)
 
-        # pyqtgraph requires numpy arrays, not deques or plain lists
         t_arr = np.array(self._times)
         self.curve_temp.setData(t_arr, np.array(self._temps))
         self.curve_power.setData(t_arr, np.array(self._powers))
 
         if self._log_writer and self._log_t0 is not None:
-            # elapsed from _log_t0, not _t0, so the CSV clock starts at 0
-            # from when you clicked Start Logging rather than from connect time
             log_elapsed = (time.time() - self._log_t0) / 60.0
             self._log_writer.writerow([
                 datetime.now().isoformat(),
@@ -1027,14 +739,74 @@ class FurnaceGUI(QMainWindow):
                 f"{power:.2f}",
                 f"{working_sp:.2f}",
             ])
-            # Flush after every row so data is on disk even if the program crashes
             self._log_file.flush()
+
+    # -----------------------------------------------------------------------
+    # Error handling and auto-reconnect
+    # -----------------------------------------------------------------------
 
     def _on_worker_error(self, msg: str):
         self.temp_display.setText("ERR")
         self.power_display.setText("ERR")
         self.sp_display.setText("ERR")
-        self.statusBar().showMessage(f"Communication error: {msg}", 6000)
+        if not self._user_disconnected and not self._reconnecting:
+            self._start_reconnect(msg)
+        else:
+            self.statusBar().showMessage(f"Communication error: {msg}", 6000)
+
+    def _start_reconnect(self, initial_error: str):
+        self._reconnecting = True
+        if self.worker:
+            self.worker.stop()
+            self.worker = None
+        self._reconnect_status.emit(
+            f"Connection lost ({initial_error}) - attempting to reconnect..."
+        )
+        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+
+    def _reconnect_loop(self):
+        model = self._model_name
+        port  = self.port_edit.currentText().strip()
+        if "COM" not in port:
+            port = port.replace("ASRL", "COM").replace("::INSTR", "")
+        try:
+            addr = int(self.addr_edit.text().strip())
+        except ValueError:
+            self._reconnect_failed.emit("Invalid Modbus address - cannot reconnect.")
+            return
+
+        for attempt in range(1, 6):
+            if self._user_disconnected:
+                return
+            self._reconnect_status.emit(f"Reconnect attempt {attempt}/5...")
+            try:
+                driver_class = EUROTHERM_DRIVER_MAP[model]
+                new_driver   = driver_class(port, addr)
+                _            = new_driver.process_value
+                self.driver  = new_driver
+                self._reconnect_success.emit()
+                return
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+        self._reconnect_failed.emit(
+            "Lost connection to furnace - could not reconnect after 5 attempts."
+        )
+
+    def _on_reconnect_success(self):
+        self._reconnecting = False
+        self.worker = DataWorker(self.driver, interval_s=self._poll_interval())
+        self.worker.data_ready.connect(self._on_data)
+        self.worker.error_occurred.connect(self._on_worker_error)
+        self.worker.start()
+        self.statusBar().showMessage("Reconnected successfully.")
+
+    def _on_reconnect_failed(self, msg: str):
+        self._reconnecting      = False
+        self._user_disconnected = True
+        self.statusBar().showMessage(f"Error: {msg}")
+        self._disconnect()
 
     # -----------------------------------------------------------------------
     # Helpers
