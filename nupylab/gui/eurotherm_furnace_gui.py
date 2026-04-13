@@ -245,6 +245,12 @@ class FurnaceGUI(QMainWindow):
         self.setWindowTitle("NUPyLab - Eurotherm Furnace Control")
         self.setMinimumSize(1200, 700)
 
+        # Connect reconnect signals once here so they don't accumulate
+        # extra connections if the user disconnects and reconnects repeatedly.
+        self._reconnect_success.connect(self._on_reconnect_success)
+        self._reconnect_failed.connect(self._on_reconnect_failed)
+        self._reconnect_status.connect(lambda msg: self.statusBar().showMessage(msg))
+
     # -----------------------------------------------------------------------
     # UI layout
     # -----------------------------------------------------------------------
@@ -529,11 +535,6 @@ class FurnaceGUI(QMainWindow):
         self.worker = DataWorker(self.driver, interval_s=self._poll_interval())
         self.worker.data_ready.connect(self._on_data)
         self.worker.error_occurred.connect(self._on_worker_error)
-
-        self._reconnect_success.connect(self._on_reconnect_success)
-        self._reconnect_failed.connect(self._on_reconnect_failed)
-        self._reconnect_status.connect(lambda msg: self.statusBar().showMessage(msg))
-
         self.worker.start()
 
         self.connect_btn.setText("Disconnect")
