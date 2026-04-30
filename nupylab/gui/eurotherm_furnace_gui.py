@@ -153,15 +153,20 @@ class RampManager(QObject):
         ).start()
 
     def _setup(self, target: float, rate: float, current_temp: float):
-        try:
-            if "2400" in self.model_name:
-                self._start_2400(target, rate)
-            elif "3216" in self.model_name:
-                self._start_3216(target, rate, current_temp)
-            else:
-                self._start_2200(target, rate, current_temp)
-        except Exception as exc:
-            self.ramp_error.emit(str(exc))
+        for attempt in range(3):
+            try:
+                if "2400" in self.model_name:
+                    self._start_2400(target, rate)
+                elif "3216" in self.model_name:
+                    self._start_3216(target, rate, current_temp)
+                else:
+                    self._start_2200(target, rate, current_temp)
+                return
+            except Exception as exc:
+                if attempt == 2:
+                    self.ramp_error.emit(str(exc))
+                else:
+                    time.sleep(0.5)
 
     def _teardown(self, current_temp: float):
         try:
