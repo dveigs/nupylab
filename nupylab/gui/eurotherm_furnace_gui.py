@@ -760,6 +760,11 @@ class FurnaceGUI(QMainWindow):
         if self.worker:
             self.worker.stop()
             self.worker = None
+        if self.driver and hasattr(self.driver, "serial"):
+            try:
+                self.driver.serial.close()
+            except Exception:
+                pass
         self._reconnect_status.emit(
             f"Connection lost ({initial_error}) - attempting to reconnect..."
         )
