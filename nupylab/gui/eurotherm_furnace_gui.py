@@ -776,10 +776,10 @@ class FurnaceGUI(QMainWindow):
             self._reconnect_failed.emit("Invalid Modbus address - cannot reconnect.")
             return
 
-        for attempt in range(1, 11):
+        for attempt in range(1, 6):
             if self._user_disconnected:
                 return
-            self._reconnect_status.emit(f"Reconnect attempt {attempt}/10...")
+            self._reconnect_status.emit(f"Reconnect attempt {attempt}/5...")
             try:
                 driver_class = EUROTHERM_DRIVER_MAP[model]
                 new_driver   = driver_class(port, addr)
@@ -789,10 +789,10 @@ class FurnaceGUI(QMainWindow):
                 return
             except Exception:
                 pass
-            time.sleep(1.0)
+            time.sleep(10.0)
 
         self._reconnect_failed.emit(
-            "Lost connection to furnace - could not reconnect after 10 attempts."
+            "Lost connection to furnace - could not reconnect after 5 attempts."
         )
 
     def _on_reconnect_success(self):
