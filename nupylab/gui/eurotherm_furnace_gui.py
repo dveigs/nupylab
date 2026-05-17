@@ -709,6 +709,7 @@ class FurnaceGUI(QMainWindow):
         self._ramp_running = False
         self.ramp_btn.setChecked(False)
         self.ramp_btn.setText("Begin Ramp")
+        print(f"[Eurotherm ramp error] {msg}")
         self.statusBar().showMessage(f"Ramp error: {msg}")
 
     # -----------------------------------------------------------------------
@@ -755,6 +756,7 @@ class FurnaceGUI(QMainWindow):
         self.temp_display.setText("ERR")
         self.power_display.setText("ERR")
         self.sp_display.setText("ERR")
+        print(f"[Eurotherm error] {msg}")
         if not self._user_disconnected and not self._reconnecting:
             self._start_reconnect(msg)
         else:
@@ -816,6 +818,7 @@ class FurnaceGUI(QMainWindow):
     def _on_reconnect_failed(self, msg: str):
         self._reconnecting      = False
         self._user_disconnected = True
+        print(f"[Eurotherm Reconnect Failed] {msg}")
         self.statusBar().showMessage(f"Error: {msg}")
         self._disconnect()
 
