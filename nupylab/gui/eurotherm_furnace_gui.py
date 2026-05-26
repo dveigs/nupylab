@@ -153,20 +153,15 @@ class RampManager(QObject):
         ).start()
 
     def _setup(self, target: float, rate: float, current_temp: float):
-        for attempt in range(3):
-            try:
-                if "2400" in self.model_name:
-                    self._start_2400(target, rate)
-                elif "3216" in self.model_name:
-                    self._start_3216(target, rate, current_temp)
-                else:
-                    self._start_2200(target, rate, current_temp)
-                return
-            except Exception as exc:
-                if attempt == 2:
-                    self.ramp_error.emit(str(exc))
-                else:
-                    time.sleep(0.5)
+        try:
+            if "2400" in self.model_name:
+                self._start_2400(target, rate)
+            elif "3216" in self.model_name:
+                self._start_3216(target, rate, current_temp)
+            else:
+                self._start_2200(target, rate, current_temp)
+        except Exception as exc:
+            self.ramp_error.emit(str(exc))
 
     def _teardown(self, current_temp: float):
         try:
@@ -249,10 +244,6 @@ class FurnaceGUI(QMainWindow):
         self._build_ui()
         self.setWindowTitle("NUPyLab - Eurotherm Furnace Control")
         self.setMinimumSize(1200, 700)
-
-        self._reconnect_success.connect(self._on_reconnect_success)
-        self._reconnect_failed.connect(self._on_reconnect_failed)
-        self._reconnect_status.connect(lambda msg: self.statusBar().showMessage(msg))
 
     # -----------------------------------------------------------------------
     # UI layout
@@ -539,6 +530,9 @@ class FurnaceGUI(QMainWindow):
         self.worker.data_ready.connect(self._on_data)
         self.worker.error_occurred.connect(self._on_worker_error)
 
+        self._reconnect_success.connect(self._on_reconnect_success)
+        self._reconnect_failed.connect(self._on_reconnect_failed)
+        self._reconnect_status.connect(lambda msg: self.statusBar().showMessage(msg))
 
         self.worker.start()
 
@@ -709,7 +703,6 @@ class FurnaceGUI(QMainWindow):
         self._ramp_running = False
         self.ramp_btn.setChecked(False)
         self.ramp_btn.setText("Begin Ramp")
-        print(f"[Eurotherm ramp error] {msg}")
         self.statusBar().showMessage(f"Ramp error: {msg}")
 
     # -----------------------------------------------------------------------
@@ -756,7 +749,6 @@ class FurnaceGUI(QMainWindow):
         self.temp_display.setText("ERR")
         self.power_display.setText("ERR")
         self.sp_display.setText("ERR")
-        print(f"[Eurotherm error] {msg}")
         if not self._user_disconnected and not self._reconnecting:
             self._start_reconnect(msg)
         else:
@@ -767,11 +759,6 @@ class FurnaceGUI(QMainWindow):
         if self.worker:
             self.worker.stop()
             self.worker = None
-        if self.driver and hasattr(self.driver, "serial"):
-            try:
-                self.driver.serial.close()
-            except Exception:
-                pass
         self._reconnect_status.emit(
             f"Connection lost ({initial_error}) - attempting to reconnect..."
         )
@@ -801,7 +788,7 @@ class FurnaceGUI(QMainWindow):
                 return
             except Exception:
                 pass
-            time.sleep(10.0)
+            time.sleep(1.0)
 
         self._reconnect_failed.emit(
             "Lost connection to furnace - could not reconnect after 5 attempts."
@@ -818,7 +805,6 @@ class FurnaceGUI(QMainWindow):
     def _on_reconnect_failed(self, msg: str):
         self._reconnecting      = False
         self._user_disconnected = True
-        print(f"[Eurotherm Reconnect Failed] {msg}")
         self.statusBar().showMessage(f"Error: {msg}")
         self._disconnect()
 
