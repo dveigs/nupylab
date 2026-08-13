@@ -49,7 +49,7 @@ try:
         QHBoxLayout, QVBoxLayout, QGridLayout,
         QLabel, QLineEdit, QPushButton, QComboBox,
         QGroupBox, QFileDialog, QMessageBox, QFrame,
-        QStatusBar,
+        QStatusBar, QPlainTextEdit,
     )
     from PyQt6.QtCore import pyqtSignal, QObject
     _PYQT6 = True
@@ -59,7 +59,7 @@ except ImportError:
         QHBoxLayout, QVBoxLayout, QGridLayout,
         QLabel, QLineEdit, QPushButton, QComboBox,
         QGroupBox, QFileDialog, QMessageBox, QFrame,
-        QStatusBar,
+        QStatusBar, QPlainTextEdit,
     )
     from PyQt5.QtCore import pyqtSignal, QObject
     _PYQT6 = False
@@ -153,15 +153,20 @@ class RampManager(QObject):
         ).start()
 
     def _setup(self, target: float, rate: float, current_temp: float):
-        try:
-            if "2400" in self.model_name:
-                self._start_2400(target, rate)
-            elif "3216" in self.model_name:
-                self._start_3216(target, rate, current_temp)
-            else:
-                self._start_2200(target, rate, current_temp)
-        except Exception as exc:
-            self.ramp_error.emit(str(exc))
+        for attempt in range(3):
+            try:
+                if "2400" in self.model_name:
+                    self._start_2400(target, rate)
+                elif "3216" in self.model_name:
+                    self._start_3216(target, rate, current_temp)
+                else:
+                    self._start_2200(target, rate, current_temp)
+                return
+            except Exception as exc:
+                if attempt == 2:
+                    self.ramp_error.emit(str(exc))
+                else:
+                    time.sleep(1.0)
 
     def _teardown(self, current_temp: float):
         try:
@@ -240,6 +245,8 @@ class FurnaceGUI(QMainWindow):
         self._powers = deque(maxlen=N)
 
         self._last_temp = 25.0
+
+        self._error_log = deque(maxlen=200)
 
         self._build_ui()
         self.setWindowTitle("NUPyLab - Eurotherm Furnace Control")
@@ -434,6 +441,17 @@ class FurnaceGUI(QMainWindow):
         range_row.addWidget(reset_btn)
         range_row.addStretch()
         v.addLayout(range_row)
+
+        self.error_log_view = QPlainTextEdit()
+        self.error_log_view.setReadOnly(True)
+        self.error_log_view.setMaximumHeight(120)
+        self.error_log_view.setStyleSheet(
+            "background-color: #1a1a1a; color: #ff9999; "
+            "font-family: monospace; font-size: 11px;"
+        )
+        self.error_log_view.setPlaceholderText("Errors will appear here...")
+        v.addWidget(QLabel("Error Log"))
+        v.addWidget(self.error_log_view)
 
         return box
 
@@ -686,7 +704,7 @@ class FurnaceGUI(QMainWindow):
         self._ramp_running = True
         self.ramp_btn.setText("Stop Ramp")
         self.statusBar().showMessage(
-            f"Ramping to {target:.1f} C at {rate:.1f} C/min ..."
+            f"Setting up ramp to {target:.1f} C at {rate:.1f} C/min..."
         )
 
     def _stop_ramp(self):
@@ -703,6 +721,7 @@ class FurnaceGUI(QMainWindow):
         self._ramp_running = False
         self.ramp_btn.setChecked(False)
         self.ramp_btn.setText("Begin Ramp")
+        self._log_error("Ramp", msg)
         self.statusBar().showMessage(f"Ramp error: {msg}")
 
     # -----------------------------------------------------------------------
@@ -749,16 +768,34 @@ class FurnaceGUI(QMainWindow):
         self.temp_display.setText("ERR")
         self.power_display.setText("ERR")
         self.sp_display.setText("ERR")
+
+        low = msg.lower()
+        if "busy" in low:
+            category = "Instrument busy"
+        elif "checksum" in low or "crc" in low:
+            category = "Checksum / noise"
+        elif "no response" in low or "timeout" in low:
+            category = "No response"
+        else:
+            category = "Communication"
+
+        self._log_error(category, msg)
+
         if not self._user_disconnected and not self._reconnecting:
             self._start_reconnect(msg)
         else:
-            self.statusBar().showMessage(f"Communication error: {msg}", 6000)
+            self.statusBar().showMessage(f"{category}: {msg}", 6000)
 
     def _start_reconnect(self, initial_error: str):
         self._reconnecting = True
         if self.worker:
             self.worker.stop()
             self.worker = None
+        if self.driver and hasattr(self.driver, "serial"):
+            try:
+                self.driver.serial.close()
+            except Exception:
+                pass
         self._reconnect_status.emit(
             f"Connection lost ({initial_error}) - attempting to reconnect..."
         )
@@ -775,6 +812,8 @@ class FurnaceGUI(QMainWindow):
             self._reconnect_failed.emit("Invalid Modbus address - cannot reconnect.")
             return
 
+        time.sleep(3.0)
+
         for attempt in range(1, 6):
             if self._user_disconnected:
                 return
@@ -788,7 +827,7 @@ class FurnaceGUI(QMainWindow):
                 return
             except Exception:
                 pass
-            time.sleep(1.0)
+            time.sleep(2.0)
 
         self._reconnect_failed.emit(
             "Lost connection to furnace - could not reconnect after 5 attempts."
@@ -800,11 +839,21 @@ class FurnaceGUI(QMainWindow):
         self.worker.data_ready.connect(self._on_data)
         self.worker.error_occurred.connect(self._on_worker_error)
         self.worker.start()
-        self.statusBar().showMessage("Reconnected successfully.")
+
+        try:
+            current_temp = self.driver.process_value
+            current_sp   = self.driver.working_setpoint
+            self.statusBar().showMessage(
+                f"Reconnected - currently at {current_temp:.1f} C, "
+                f"setpoint {current_sp:.1f} C."
+            )
+        except Exception:
+            self.statusBar().showMessage("Reconnected successfully.")
 
     def _on_reconnect_failed(self, msg: str):
         self._reconnecting      = False
         self._user_disconnected = True
+        self._log_error("Reconnect failed", msg)
         self.statusBar().showMessage(f"Error: {msg}")
         self._disconnect()
 
@@ -817,6 +866,16 @@ class FurnaceGUI(QMainWindow):
             return max(0.5, float(self.log_interval_edit.text()))
         except ValueError:
             return 1.0
+
+    def _log_error(self, category: str, msg: str):
+        stamp = datetime.now().strftime("%H:%M:%S")
+        line  = f"[{stamp}] {category}: {msg}"
+        print(line)
+        self._error_log.append(line)
+        self.error_log_view.setPlainText("\n".join(self._error_log))
+        self.error_log_view.verticalScrollBar().setValue(
+            self.error_log_view.verticalScrollBar().maximum()
+        )
 
     def closeEvent(self, event):
         self._disconnect()
